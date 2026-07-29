@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Placement Schedule</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-lockup">
+      <div class="brand-mark">VP</div>
+      <div>
+        <p class="eyebrow">Lancashire & South Cumbria</p>
+        <h1>Virtual Placement</h1>
+      </div>
+    </div>
+    <button class="icon-button" id="helpButton" aria-label="Open help">?</button>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Learner timetable</p>
+        <h2>Your two-week placement</h2>
+        <p class="hero-copy">Everything you need for each session, in one place.</p>
+      </div>
+      <div class="programme-chip">
+        <span>7–18 Sep 2026</span>
+        <strong>10 days</strong>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="Schedule controls">
+      <div class="segmented-control" role="tablist" aria-label="Choose week">
+        <button class="segment active" data-week="1" role="tab" aria-selected="true">Week 1</button>
+        <button class="segment" data-week="2" role="tab" aria-selected="false">Week 2</button>
+      </div>
+      <label class="filter-wrap">
+        <span class="sr-only">Filter sessions</span>
+        <select id="sessionFilter">
+          <option value="all">All sessions</option>
+          <option value="live">Live sessions</option>
+          <option value="activity">Activities</option>
+          <option value="reflection">Reflection</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="today-card" id="todayCard">
+      <div>
+        <p class="eyebrow">Up next</p>
+        <h3>Population Health</h3>
+        <p>Tuesday · 10:00–11:00</p>
+      </div>
+      <button class="primary-button" data-session-id="population-health">View details</button>
+    </section>
+
+    <section class="schedule" id="schedule" aria-live="polite"></section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Main navigation">
+    <button class="nav-item active"><span>⌂</span><small>Schedule</small></button>
+    <button class="nav-item"><span>✓</span><small>Activities</small></button>
+    <button class="nav-item"><span>◷</span><small>Progress</small></button>
+    <button class="nav-item"><span>☰</span><small>More</small></button>
+  </nav>
+
+  <dialog id="sessionDialog" class="session-dialog">
+    <button class="close-dialog" id="closeDialog" aria-label="Close">×</button>
+    <div id="dialogContent"></div>
+  </dialog>
+
+  <dialog id="helpDialog" class="session-dialog compact-dialog">
+    <button class="close-dialog" id="closeHelp" aria-label="Close">×</button>
+    <p class="eyebrow">How to use</p>
+    <h2>Your placement schedule</h2>
+    <p>Choose a week, filter the schedule, and open any session for joining instructions, preparation and learning outcomes.</p>
+  </dialog>
+
+  <script src="script.js"></script>
+</body>
+</html>
