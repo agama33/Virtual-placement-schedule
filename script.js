@@ -1,676 +1,241 @@
-const preview = document.getElementById("preview");
-const prophecyButton = document.getElementById("prophecyButton");
-const uploadPhotoInput = document.getElementById("uploadPhoto");
-const placeholderText = document.getElementById("placeholderText");
-
-const openCameraButton = document.getElementById("openCameraButton");
-const captureButton = document.getElementById("captureButton");
-const shareButton = document.getElementById("shareButton");
-
-const video = document.getElementById("camera");
-const canvas = document.getElementById("canvas");
-const resultBox = document.getElementById("result");
-const loadingOverlay = document.getElementById("loadingOverlay");
-const loadingMessage = document.getElementById("loadingMessage");
-const shareCanvas = document.getElementById("shareCanvas");
-
-let cameraStream = null;
-let isSubmitting = false;
-let lastProphecy = "";
-let loadingMessageTimer = null;
-
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const ALLOWED_MIME_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif"
-];
-
-/* ======================
-   HELPERS
-====================== */
-
-function trackEvent(eventName, parameters = {}) {
-  if (typeof gtag !== "function") {
-    return;
-  }
-
-  gtag("event", eventName, parameters);
-}
-
-function setResult(message) {
-  if (!message) {
-    resultBox.textContent = "";
-    resultBox.style.display = "none";
-    return;
-  }
-
-  resultBox.textContent = message;
-  resultBox.style.display = "block";
-}
-
-function clearResult() {
-  resultBox.textContent = "";
-  resultBox.style.display = "none";
-}
-
-function enableShare(prophecyText) {
-  lastProphecy = prophecyText || "";
-  shareButton.disabled = !lastProphecy.trim();
-}
-
-function resetShare() {
-  lastProphecy = "";
-  shareButton.disabled = true;
-}
-
-function showPlaceholder() {
-  placeholderText.style.display = "grid";
-  preview.style.display = "none";
-  video.style.display = "none";
-}
-
-function showPreviewFromDataUrl(dataUrl) {
-  preview.src = dataUrl;
-  preview.style.display = "block";
-  video.style.display = "none";
-  placeholderText.style.display = "none";
-  prophecyButton.disabled = false;
-  clearResult();
-  resetShare();
-}
-
-function showCameraInPreview() {
-  preview.style.display = "none";
-  video.style.display = "block";
-  placeholderText.style.display = "none";
-  prophecyButton.disabled = true;
-  clearResult();
-  resetShare();
-}
-
-function stopCamera() {
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-
-  video.srcObject = null;
-  video.style.display = "none";
-
-  captureButton.style.display = "none"; // 👈 hide it
-}
-
-function resetPreview() {
-  preview.src = "";
-  preview.style.display = "none";
-  video.style.display = "none";
-  placeholderText.style.display = "grid";
-  prophecyButton.disabled = true;
-  clearResult();
-  resetShare();
-}
-
-function startLoadingMessages() {
-  const messages = [
-    "The Oracle is reading your coffee...",
-    "Interpreting the patterns in the foam...",
-    "Your prophecy is taking shape..."
-  ];
-
-  let messageIndex = 0;
-
-  loadingMessage.textContent = messages[messageIndex];
-
-  loadingMessageTimer = setInterval(() => {
-    messageIndex = (messageIndex + 1) % messages.length;
-    loadingMessage.textContent = messages[messageIndex];
-  }, 2500);
-}
-
-function stopLoadingMessages() {
-  clearInterval(loadingMessageTimer);
-  loadingMessageTimer = null;
-}
-
-function setLoadingState(loading) {
-  isSubmitting = loading;
-
-  prophecyButton.disabled = loading || !preview.src;
-  openCameraButton.disabled = loading;
-  uploadPhotoInput.disabled = loading;
-  captureButton.disabled = loading || !cameraStream;
-  shareButton.disabled = loading || !lastProphecy.trim();
-
-  loadingOverlay.classList.toggle("is-visible", loading);
-  loadingOverlay.setAttribute("aria-hidden", !loading);
-
-  if (loading) {
-    startLoadingMessages();
-  } else {
-    stopLoadingMessages();
-  }
-}
-
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = event => resolve(event.target.result);
-    reader.onerror = () => reject(new Error("Could not read the file."));
-    reader.readAsDataURL(file);
-  });
-}
-
-function blobToJpegDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = event => resolve(event.target.result);
-    reader.onerror = () => reject(new Error("Could not convert image."));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function normaliseImageFile(file) {
-  if (!file) {
-    throw new Error("No file selected.");
-  }
-
-  const mimeType = (file.type || "").toLowerCase();
-  const fileName = (file.name || "").toLowerCase();
-  const isHeic =
-    mimeType === "image/heic" ||
-    mimeType === "image/heif" ||
-    fileName.endsWith(".heic") ||
-    fileName.endsWith(".heif");
-
-  if (
-    mimeType &&
-    !ALLOWED_MIME_TYPES.includes(mimeType) &&
-    !isHeic
-  ) {
-    throw new Error("Please upload a JPG, PNG, WEBP, or HEIC image.");
-  }
-
-  if (isHeic) {
-    if (typeof heic2any === "undefined") {
-      throw new Error("HEIC conversion is not available right now.");
-    }
-
-    const convertedBlob = await heic2any({
-      blob: file,
-      toType: "image/jpeg",
-      quality: 0.9
-    });
-
-    const finalBlob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
-    const dataUrl = await blobToJpegDataUrl(finalBlob);
-
-    if (finalBlob.size > MAX_IMAGE_BYTES) {
-      throw new Error("That image is too large. Please choose one under 8 MB.");
-    }
-
-    return dataUrl;
-  }
-
-  if (file.size > MAX_IMAGE_BYTES) {
-    throw new Error("That image is too large. Please choose one under 8 MB.");
-  }
-
-  return fileToDataUrl(file);
-}
-
-/* ======================
-   IMAGE INPUT
-====================== */
-
-uploadPhotoInput.addEventListener("change", async event => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-
-  try {
-    stopCamera();
-    const dataUrl = await normaliseImageFile(file);
-    showPreviewFromDataUrl(dataUrl);
-  } catch (error) {
-    resetPreview();
-    setResult(error.message || "The oracle cannot read that image.");
-  } finally {
-    uploadPhotoInput.value = "";
-    setLoadingState(false);
-  }
-});
-
-openCameraButton.addEventListener("click", async () => {
-  clearResult();
-
-  try {
-    stopCamera();
-
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "environment"
-      },
-      audio: false
-    });
-
-    video.srcObject = cameraStream;
-    showCameraInPreview();
-
-    captureButton.style.display = "grid"; // 👈 show it
-    captureButton.disabled = false;
-
-  } catch (error) {
-    stopCamera();
-    setResult("The camera could not be opened right now.");
-  }
-});
-
-captureButton.addEventListener("click", () => {
-  if (!cameraStream) {
-    setResult("The camera is not ready yet.");
-    return;
-  }
-
-  const width = video.videoWidth;
-  const height = video.videoHeight;
-
-  if (!width || !height) {
-    setResult("The oracle needs a moment before capturing.");
-    return;
-  }
-
-  canvas.width = width;
-  canvas.height = height;
-
-  const context = canvas.getContext("2d");
-  context.drawImage(video, 0, 0, width, height);
-
-  const imageDataUrl = canvas.toDataURL("image/jpeg", 0.9);
-  showPreviewFromDataUrl(imageDataUrl);
-  stopCamera();
-  setLoadingState(false);
-});
-
-/* ======================
-   PROPHECY
-====================== */
-
-prophecyButton.addEventListener("click", async () => {
-  if (!preview.src || isSubmitting) return;
-
-  trackEvent("reading_started");
-
-  setLoadingState(true);
-  resetShare();
-
-  try {
-    const response = await fetch("/read-latte", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        imageDataUrl: preview.src
-      })
-    });
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(data.error || "The oracle cannot read the foam right now.");
-    }
-
-    const prophecy = data.prophecy || "A mysterious silence hangs over this cup.";
-    setResult(prophecy);
-    enableShare(prophecy);
-  } catch (error) {
-    setResult(error.message || "The oracle cannot read the foam right now.");
-    resetShare();
-  } finally {
-    setLoadingState(false);
-  }
-});
-
-/* ======================
-   SHARE
-====================== */
-
-function drawWrappedText(context, text, x, y, maxWidth, lineHeight) {
-  const words = text.split(" ");
-  const lines = [];
-  let line = "";
-
-  for (const word of words) {
-      const testLine = line ? line + " " + word : word;
-      const metrics = context.measureText(testLine);
-
-      if (metrics.width > maxWidth && line) {
-          lines.push(line);
-          line = word;
-      } else {
-          line = testLine;
-      }
-  }
-
-  if (line) {
-      lines.push(line);
-  }
-
-  // Draw centred around the supplied Y coordinate
-  const startY = y - ((lines.length - 1) * lineHeight) / 2;
-
-  lines.forEach((line, index) => {
-      context.fillText(line, x, startY + index * lineHeight);
-  });
-
-  return lines.length;
-}
-
-function addPaperTexture(context, width, height) {
-  context.save();
-
-  // A fixed seed keeps the texture consistent each time the card is created.
-  let seed = 48271;
-
-  function seededRandom() {
-    seed = (seed * 16807) % 2147483647;
-    return (seed - 1) / 2147483646;
-  }
-
-  // Fine paper grain
-  for (let i = 0; i < 5500; i++) {
-    const x = seededRandom() * width;
-    const y = seededRandom() * height;
-    const size = seededRandom() * 1.4 + 0.2;
-    const opacity = seededRandom() * 0.025 + 0.008;
-
-    context.fillStyle = `rgba(77, 58, 47, ${opacity})`;
-    context.fillRect(x, y, size, size);
-  }
-
-  // A few very faint paper fibres
-  context.lineWidth = 0.5;
-
-  for (let i = 0; i < 90; i++) {
-    const x = seededRandom() * width;
-    const y = seededRandom() * height;
-    const length = seededRandom() * 34 + 8;
-    const opacity = seededRandom() * 0.018 + 0.004;
-
-    context.beginPath();
-    context.moveTo(x, y);
-    context.lineTo(x + length, y + seededRandom() * 4 - 2);
-    context.strokeStyle = `rgba(106, 85, 70, ${opacity})`;
-    context.stroke();
-  }
-
-  context.restore();
-}
-
-function createShareCard(prophecy) {
-  const context = shareCanvas.getContext("2d");
-
-  const cardWidth = 1080;
-  const cardHeight = 1350;
-
-  shareCanvas.width = cardWidth;
-  shareCanvas.height = cardHeight;
-
-  // Background gradient (matches app)
-  const background = context.createLinearGradient(0, 0, 0, cardHeight);
-  background.addColorStop(0, "#f8f3ed");
-  background.addColorStop(1, "#efe4d6");
-
-  context.fillStyle = background;
-  context.fillRect(0, 0, cardWidth, cardHeight);
-
-  // Add a subtle, consistent paper grain over the background
-  addPaperTexture(context, cardWidth, cardHeight);
-
-  // Subtle inset border
-  context.save();
-
-  context.strokeStyle = "rgba(77, 58, 47, 0.14)";
-  context.lineWidth = 2;
-
-  context.beginPath();
-  context.roundRect(
-    24,
-    24,
-    cardWidth - 48,
-    cardHeight - 48,
-    28
-  );
-  context.stroke();
-
-  context.restore();
-
-  context.textAlign = "center";
-
-  // ---------- Title ----------
-  context.fillStyle = "#4d3a2f";
-  context.font = "600 54px 'Fraunces', serif";
-
-  context.shadowColor = "rgba(80,55,35,0.12)";
-  context.shadowBlur = 8;
-  context.shadowOffsetX = 0;
-  context.shadowOffsetY = 2;
-
-  context.fillText("Latte Oracle", cardWidth / 2, 90);
-
-  // Reset shadow so it doesn't affect everything else
-  context.shadowColor = "transparent";
-  context.shadowBlur = 0;
-  context.shadowOffsetX = 0;
-  context.shadowOffsetY = 0;
-
-  // ---------- Subtitle ----------
-  context.fillStyle = "#6a5546";
-  context.font = "italic 32px Georgia";
-  context.fillText("Today's Reading", cardWidth / 2, 140);
-
-  // ---------- Date ----------
-  const now = new Date();
-
-  const day = now.getDate();
-
-  const suffix =
-    day % 10 === 1 && day !== 11
-      ? "st"
-      : day % 10 === 2 && day !== 12
-      ? "nd"
-      : day % 10 === 3 && day !== 13
-      ? "rd"
-      : "th";
-
-  const weekday = now.toLocaleDateString("en-GB", {
-    weekday: "long"
-  });
-
-  const monthYear = now.toLocaleDateString("en-GB", {
-    month: "long",
-    year: "numeric"
-  });
-
-  const formattedDate = `${weekday} ${day}${suffix} ${monthYear}`;
-
-  context.fillStyle = "#6a5546";
-  context.font = "26px Georgia";
-  context.fillText(formattedDate, cardWidth / 2, 185);
-
-  // ---------- Photo ----------
-  const imageSize = 780;
-  const imageX = (cardWidth - imageSize) / 2;
-  const imageY = 230;
-
-  context.save();
-
-  context.beginPath();
-  context.roundRect(imageX, imageY, imageSize, imageSize, 36);
-  context.clip();
-
-  const imageRatio = preview.naturalWidth / preview.naturalHeight;
-
-  let sourceX = 0;
-  let sourceY = 0;
-  let sourceWidth = preview.naturalWidth;
-  let sourceHeight = preview.naturalHeight;
-
-  if (imageRatio > 1) {
-    sourceWidth = preview.naturalHeight;
-    sourceX = (preview.naturalWidth - sourceWidth) / 2;
-  } else {
-    sourceHeight = preview.naturalWidth;
-    sourceY = (preview.naturalHeight - sourceHeight) / 2;
-  }
-
-  context.drawImage(
-    preview,
-    sourceX,
-    sourceY,
-    sourceWidth,
-    sourceHeight,
-    imageX,
-    imageY,
-    imageSize,
-    imageSize
-  );
-
-  context.restore();
-
-  // ---------- Separator ----------
-  context.fillStyle = "#8b7569";
-  context.font = "28px Georgia";
-  context.fillText("✦", cardWidth / 2, 1055);
-
-  // ---------- Prophecy ----------
-  context.fillStyle = "#4d3a2f";
-  context.font = "italic 36px Georgia";
-
-  drawWrappedText(
-    context,
-    `“${prophecy}”`,
-    cardWidth / 2,
-    1185,
-    860,
-    52
-);
-
-  // ---------- Website ----------
-  context.fillStyle = "#8b7569";
-  context.font = "22px Inter";
-
-  context.fillText(
-    "latteoracle.com",
-    cardWidth / 2,
-    1315
-  );
-}
-
-function canvasToBlob(canvas) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          resolve(blob);
-        } else {
-          reject(new Error("The share card could not be created."));
-        }
-      },
-      "image/png",
-      1
-    );
-  });
-}
-
-shareButton.addEventListener("click", async () => {
-  if (!lastProphecy) return;
-
-  shareButton.disabled = true;
-
-  try {
-    // Make sure Fraunces and the other web fonts are ready
-    // before drawing text onto the canvas.
-    await document.fonts.ready;
-
-    createShareCard(lastProphecy);
-
-    const cardBlob = await canvasToBlob(shareCanvas);
-
-    const cardFile = new File(
-      [cardBlob],
-      "latte-oracle-reading.png",
+const placement = {
+  startDate: '2026-09-07',
+  weeks: {
+    1: [
       {
-        type: "image/png"
-      }
-    );
-
-    const appUrl = "https://www.latteoracle.com";
-
-    const shareText =
-      `My Latte Oracle reading:\n\n` +
-      `${lastProphecy}\n\n` +
-      `Reveal your own at ${appUrl}`;
-
-    // Best option: share the finished image through the native share sheet.
-    if (
-      navigator.share &&
-      navigator.canShare &&
-      navigator.canShare({ files: [cardFile] })
-    ) {
-      await navigator.share({
-        title: "Latte Oracle",
-        text: shareText,
-        files: [cardFile]
-      });
-
-      return;
-    }
-
-    // Some browsers support text sharing but not file sharing.
-    if (navigator.share) {
-      await navigator.share({
-        title: "Latte Oracle",
-        text: shareText,
-        url: appUrl
-      });
-
-      return;
-    }
-
-    // Desktop fallback: download the generated card.
-    const downloadUrl = URL.createObjectURL(cardBlob);
-    const downloadLink = document.createElement("a");
-
-    downloadLink.href = downloadUrl;
-    downloadLink.download = "latte-oracle-reading.png";
-
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    downloadLink.remove();
-
-    URL.revokeObjectURL(downloadUrl);
-  } catch (error) {
-    // Closing the native share sheet is not a genuine error.
-    if (error.name !== "AbortError") {
-      console.error("Sharing failed:", error);
-      alert(
-        "The Oracle could not share the card right now. Please try again."
-      );
-    }
-  } finally {
-    shareButton.disabled = false;
+        isoDate: '2026-09-07', dayName: 'Monday', shortDay: 'Mon', dateNumber: '7', label: 'Day 1',
+        notice: {
+          level: 'information',
+          title: 'Welcome to your first day',
+          message: 'Please join Welcome and Orientation by 09:15. Have Microsoft Teams open and your introduction document ready.',
+          points: ['Check that Teams is working', 'Lunch is scheduled for 12:30', 'Use the session panels below for resources and joining details']
+        },
+        sessions: [
+          { id:'wellbeing-am', start:'09:00', end:'09:15', title:'Morning Wellbeing Check-in', type:'wellbeing', speaker:'Placement Team', location:'Microsoft Teams', description:'A short welcome and wellbeing check-in to help everyone settle into the day.', preparation:'Join a few minutes early and have your camera available if you are comfortable using it.', outcomes:['Connect with your learner group','Understand the plan for the day'] },
+          { id:'welcome', start:'09:15', end:'10:00', title:'Welcome and Orientation', type:'orientation', speaker:'Jo Williams', administrator:'Maya Lewis', location:'Microsoft Teams', description:'Welcome and learner orientation. Meet the team, understand how the placement works and get ready for the fortnight ahead.', preparation:'Have Teams open and your learner workbook ready.', outcomes:['Understand the structure of the placement','Know where to find support','Meet your learner group'], resources:[{ name:'Introduction document', file:'Introduction (test).docx', type:'Word document', action:'Download' }] },
+          { id:'break-am', start:'10:00', end:'10:15', title:'Break', type:'break', description:'Take a short screen break before the next session.' },
+          { id:'family-consultation', start:'10:15', end:'11:30', title:'Family Consultation Activity', type:'activity', speaker:'Facilitated activity', location:'Interactive web activity', description:'Explore a virtual consultation and identify factors affecting health and wellbeing.', preparation:'No preparation required.', outcomes:['Gather relevant information','Recognise wider determinants of health','Discuss findings with your group'] },
+          { id:'independent-learning', start:'11:30', end:'12:30', title:'Independent Learning', type:'independent', speaker:'Self-directed', location:'Learner workbook', description:'Use this time to review your notes, complete the first workbook task and prepare questions for the afternoon.', preparation:'Open your learner workbook.', outcomes:['Consolidate morning learning','Identify questions for discussion'] },
+          { id:'lunch-1', start:'12:30', end:'13:30', title:'Lunch', type:'break', description:'Lunch break.' },
+          { id:'primary-care-intro', start:'13:30', end:'15:00', title:'Introduction to Primary Care', type:'live', speaker:'Guest speaker', location:'Microsoft Teams', description:'An introduction to primary care, the wider system and the role of multidisciplinary teams.', preparation:'Bring one question about working in primary care.', outcomes:['Describe the role of primary care','Recognise key members of the multidisciplinary team'] },
+          { id:'wellbeing-pm', start:'15:00', end:'15:15', title:'Afternoon Wellbeing Check-in', type:'wellbeing', speaker:'Placement Team', location:'Microsoft Teams', description:'A short pause to reconnect and check how the day is going.', preparation:'No preparation required.', outcomes:['Reflect on your energy and learning needs'] },
+          { id:'reflection-1', start:'15:15', end:'16:30', title:'Daily Reflection and Group Discussion', type:'reflection', speaker:'Jo Williams', location:'Microsoft Teams', description:'Capture your key learning, compare observations with your group and note questions to revisit.', preparation:'Bring your learner workbook and notes from the day.', outcomes:['Identify key learning','Record follow-up questions','Share insights with peers'] },
+          { id:'close-1', start:'16:30', end:'17:00', title:'Day One Close', type:'orientation', speaker:'Placement Team', location:'Microsoft Teams', description:'Review tomorrow’s plan and raise any final questions before the day ends.', preparation:'Check the timetable for Tuesday.', outcomes:['Know what to prepare for Day 2'] }
+        ]
+      },
+      { isoDate:'2026-09-08', dayName:'Tuesday', shortDay:'Tue', dateNumber:'8', label:'Day 2', notice:{ level:'information', title:'Tuesday schedule', message:'The detailed schedule for this day will be added from the planning export.', points:[] }, sessions:[] },
+      { isoDate:'2026-09-09', dayName:'Wednesday', shortDay:'Wed', dateNumber:'9', label:'Day 3', notice:{ level:'information', title:'Wednesday schedule', message:'The detailed schedule for this day will be added from the planning export.', points:[] }, sessions:[] },
+      { isoDate:'2026-09-10', dayName:'Thursday', shortDay:'Thu', dateNumber:'10', label:'Day 4', notice:{ level:'information', title:'Thursday schedule', message:'The detailed schedule for this day will be added from the planning export.', points:[] }, sessions:[] },
+      { isoDate:'2026-09-11', dayName:'Friday', shortDay:'Fri', dateNumber:'11', label:'Day 5', notice:{ level:'information', title:'Friday schedule', message:'The detailed schedule for this day will be added from the planning export.', points:[] }, sessions:[] }
+    ],
+    2: [
+      { isoDate:'2026-09-14', dayName:'Monday', shortDay:'Mon', dateNumber:'14', label:'Day 6', notice:{level:'information',title:'Week 2 Monday',message:'The detailed schedule for this day will be added from the planning export.',points:[]}, sessions:[] },
+      { isoDate:'2026-09-15', dayName:'Tuesday', shortDay:'Tue', dateNumber:'15', label:'Day 7', notice:{level:'information',title:'Week 2 Tuesday',message:'The detailed schedule for this day will be added from the planning export.',points:[]}, sessions:[] },
+      { isoDate:'2026-09-16', dayName:'Wednesday', shortDay:'Wed', dateNumber:'16', label:'Day 8', notice:{level:'information',title:'Week 2 Wednesday',message:'The detailed schedule for this day will be added from the planning export.',points:[]}, sessions:[] },
+      { isoDate:'2026-09-17', dayName:'Thursday', shortDay:'Thu', dateNumber:'17', label:'Day 9', notice:{level:'information',title:'Week 2 Thursday',message:'The detailed schedule for this day will be added from the planning export.',points:[]}, sessions:[] },
+      { isoDate:'2026-09-18', dayName:'Friday', shortDay:'Fri', dateNumber:'18', label:'Day 10', notice:{level:'information',title:'Final day',message:'The detailed schedule for this day will be added from the planning export.',points:[]}, sessions:[] }
+    ]
   }
+};
+
+const scheduleEl = document.getElementById('schedule');
+const dayTabsEl = document.getElementById('dayTabs');
+const todayCardEl = document.getElementById('todayCard');
+const selectedDayHeadingEl = document.getElementById('selectedDayHeading');
+const weekButtons = [...document.querySelectorAll('[data-week]')];
+
+let currentWeek = 1;
+let currentDayIndex = 0;
+let manuallyOpenedSession = false;
+let openSessionId = null;
+
+function typeLabel(type) {
+  return {
+    live:'Live session', activity:'Interactive activity', reflection:'Reflection',
+    break:'Break', wellbeing:'Wellbeing', orientation:'Orientation', independent:'Independent learning'
+  }[type] || type;
+}
+
+function toDateTime(isoDate, time) {
+  return new Date(`${isoDate}T${time}:00`);
+}
+
+function getSessionState(day, session, now = new Date()) {
+  const start = toDateTime(day.isoDate, session.start);
+  const end = toDateTime(day.isoDate, session.end);
+  if (now < start) return 'upcoming';
+  if (now >= start && now < end) return 'current';
+  return 'past';
+}
+
+function findRelevantSession(day, now = new Date()) {
+  if (!day.sessions.length) return null;
+  const current = day.sessions.find(session => getSessionState(day, session, now) === 'current');
+  if (current) return current;
+  const next = day.sessions.find(session => getSessionState(day, session, now) === 'upcoming');
+  return next || null;
+}
+
+function renderDayTabs() {
+  const days = placement.weeks[currentWeek];
+  dayTabsEl.innerHTML = days.map((day, index) => `
+    <button class="day-tab ${index === currentDayIndex ? 'active' : ''}" data-day-index="${index}" role="tab" aria-selected="${index === currentDayIndex}">
+      <span>${day.shortDay}</span><strong>${day.dateNumber}</strong>
+    </button>
+  `).join('');
+
+  dayTabsEl.querySelectorAll('.day-tab').forEach(button => {
+    button.addEventListener('click', () => {
+      currentDayIndex = Number(button.dataset.dayIndex);
+      manuallyOpenedSession = false;
+      openSessionId = null;
+      render();
+    });
+  });
+}
+
+function renderNotice(day) {
+  const notice = day.notice;
+  const points = notice.points?.length
+    ? `<ul>${notice.points.map(point => `<li>${point}</li>`).join('')}</ul>`
+    : '';
+  todayCardEl.className = `today-card ${notice.level || 'information'}`;
+  todayCardEl.innerHTML = `
+    <div class="notice-icon" aria-hidden="true">i</div>
+    <div class="notice-content">
+      <p class="eyebrow">Today</p>
+      <h3>${notice.title}</h3>
+      <p>${notice.message}</p>
+      ${points}
+    </div>
+  `;
+}
+
+function renderResources(resources = []) {
+  if (!resources.length) return '';
+  return `
+    <section class="resource-section">
+      <div class="resource-heading">
+        <div><p class="eyebrow">Downloads</p><h4>Session resources</h4></div>
+        <span class="resource-total">${resources.length}</span>
+      </div>
+      <div class="resource-list">
+        ${resources.map(resource => `
+          <a class="resource-item" href="${encodeURI(resource.file)}" download>
+            <span class="file-icon">${resource.type.includes('PowerPoint') ? 'PPT' : 'DOC'}</span>
+            <span class="resource-details"><strong>${resource.name}</strong><small>${resource.type}</small></span>
+            <span class="resource-action">${resource.action || 'Download'}</span>
+          </a>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderSessionDetails(session) {
+  const outcomes = session.outcomes?.length
+    ? `<section class="detail-section"><h4>Learning outcomes</h4><ul>${session.outcomes.map(outcome => `<li>${outcome}</li>`).join('')}</ul></section>`
+    : '';
+  const joiningButton = session.location === 'Microsoft Teams'
+    ? `<button class="join-button" type="button" disabled title="Add the live Teams link before launch">Join session</button>`
+    : '';
+  return `
+    <div class="accordion-details-inner">
+      ${session.description ? `<section class="detail-section"><h4>About this session</h4><p>${session.description}</p></section>` : ''}
+      <div class="detail-grid">
+        ${session.speaker ? `<div><span>Led by</span><strong>${session.speaker}</strong></div>` : ''}
+        ${session.administrator ? `<div><span>Administrator</span><strong>${session.administrator}</strong></div>` : ''}
+        ${session.location ? `<div><span>Location</span><strong>${session.location}</strong></div>` : ''}
+      </div>
+      ${session.preparation ? `<section class="detail-section preparation"><h4>Before the session</h4><p>${session.preparation}</p></section>` : ''}
+      ${outcomes}
+      ${renderResources(session.resources)}
+      ${joiningButton}
+    </div>
+  `;
+}
+
+function stateLabel(state) {
+  return state === 'current' ? 'Now' : state === 'past' ? 'Completed' : 'Upcoming';
+}
+
+function renderSchedule() {
+  const day = placement.weeks[currentWeek][currentDayIndex];
+  const now = new Date();
+  const relevant = findRelevantSession(day, now);
+
+  if (!manuallyOpenedSession && !openSessionId && relevant) openSessionId = relevant.id;
+  if (!manuallyOpenedSession && !openSessionId && day.sessions.length) openSessionId = day.sessions[0].id;
+
+  selectedDayHeadingEl.innerHTML = `
+    <div><p class="eyebrow">${day.label}</p><h3>${day.dayName} ${day.dateNumber} September</h3></div>
+    <span>${day.sessions.length ? `${day.sessions.length} schedule items` : 'Schedule coming soon'}</span>
+  `;
+
+  if (!day.sessions.length) {
+    scheduleEl.innerHTML = `<div class="empty-state"><div class="empty-icon">◷</div><h3>Schedule coming soon</h3><p>This day will be populated from the placement planning export.</p></div>`;
+    return;
+  }
+
+  scheduleEl.innerHTML = `<div class="timeline">${day.sessions.map(session => {
+    const state = getSessionState(day, session, now);
+    const isOpen = openSessionId === session.id;
+    const resourceCount = session.resources?.length || 0;
+    return `
+      <article class="session-card ${state} ${isOpen ? 'open' : ''}" data-type="${session.type}" data-session-id="${session.id}">
+        <button class="accordion-trigger" aria-expanded="${isOpen}" aria-controls="details-${session.id}">
+          <span class="time-block"><strong>${session.start}</strong><span>${session.end}</span></span>
+          <span class="accent"></span>
+          <span class="session-info">
+            <span class="session-title-row"><strong>${session.title}</strong>${resourceCount ? `<span class="resource-count">📎 ${resourceCount}</span>` : ''}</span>
+            <span class="session-subtitle">${session.speaker || session.description || typeLabel(session.type)}</span>
+            <span class="session-meta"><span class="badge ${session.type}">${typeLabel(session.type)}</span><span class="state-badge ${state}">${stateLabel(state)}</span></span>
+          </span>
+          <span class="chevron" aria-hidden="true">⌄</span>
+        </button>
+        <div class="accordion-details" id="details-${session.id}" ${isOpen ? '' : 'hidden'}>${renderSessionDetails(session)}</div>
+      </article>
+    `;
+  }).join('')}</div>`;
+
+  scheduleEl.querySelectorAll('.accordion-trigger').forEach(trigger => {
+    trigger.addEventListener('click', () => {
+      const card = trigger.closest('.session-card');
+      const id = card.dataset.sessionId;
+      openSessionId = openSessionId === id ? null : id;
+      manuallyOpenedSession = true;
+      renderSchedule();
+    });
+  });
+}
+
+function render() {
+  weekButtons.forEach(button => {
+    const active = Number(button.dataset.week) === currentWeek;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  renderDayTabs();
+  const day = placement.weeks[currentWeek][currentDayIndex];
+  renderNotice(day);
+  renderSchedule();
+}
+
+weekButtons.forEach(button => {
+  button.addEventListener('click', () => {
+    currentWeek = Number(button.dataset.week);
+    currentDayIndex = 0;
+    manuallyOpenedSession = false;
+    openSessionId = null;
+    render();
+  });
 });
 
-/* ======================
-   STARTUP
-====================== */
+document.getElementById('helpButton').addEventListener('click', () => document.getElementById('helpDialog').showModal());
+document.getElementById('closeHelp').addEventListener('click', () => document.getElementById('helpDialog').close());
 
-resetPreview();
-stopCamera();
-captureButton.disabled = true;
+render();
+setInterval(() => {
+  const day = placement.weeks[currentWeek][currentDayIndex];
+  if (day.sessions.length) renderSchedule();
+}, 60000);
