@@ -32,6 +32,13 @@ const ALLOWED_MIME_TYPES = [
    HELPERS
 ====================== */
 
+function trackEvent(eventName, parameters = {}) {
+  if (typeof gtag !== "function") {
+    return;
+  }
+
+  gtag("event", eventName, parameters);
+}
 
 function setResult(message) {
   if (!message) {
@@ -294,6 +301,8 @@ captureButton.addEventListener("click", () => {
 
 prophecyButton.addEventListener("click", async () => {
   if (!preview.src || isSubmitting) return;
+
+  trackEvent("reading_started");
 
   setLoadingState(true);
   resetShare();
